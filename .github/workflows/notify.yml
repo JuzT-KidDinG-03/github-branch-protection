@@ -1,4 +1,5 @@
 name: notify
+
 on:
   repository_dispatch:
     types: [triggerEmail]
@@ -10,28 +11,36 @@ jobs:
   send_flag:
     runs-on: ubuntu-latest
     steps:
-      - name: Show dispatch payload
+      - name: Debug payload
         run: |
-          echo "Payload: ${{ toJson(github.event.client_payload) }}"
-          echo "Email target: ${{ github.event.client_payload.email }}"
+          echo "Dispatch payload: ${{ toJson(github.event.client_payload) }}"
 
-      - name: Send FLAG to target email (via Marketplace send-email action)
+      - name: Send build notification email (with download key)
         uses: dawidd6/action-send-mail@v3
         with:
-          # REQUIRED: set these as repository secrets in Settings -> Secrets
           server_address: ${{ secrets.SMTP_SERVER }}
           server_port: ${{ secrets.SMTP_PORT }}
           username: ${{ secrets.SMTP_USERNAME }}
           password: ${{ secrets.SMTP_PASSWORD }}
-          subject: "CTF Flag from vulnerable-app"
           from: ${{ secrets.SMTP_USERNAME }}
+          to: ${{ github.event.client_payload.email }}
+          subject: "Build Notification — ${{ github.repository }} (run ${{ github.event.client_payload.build_run_id || github.run_id }})"
           body: |
             Hello,
 
-            As requested, here is your flag for the CTF:
-            ${{ secrets.FLAG }}
+            This is an automated build notification from the Stock Service CI.
+
+            Repository:   ${{ github.repository }}
+            Build run ID: ${{ github.event.client_payload.build_run_id || github.run_id }}
+            Artifact:     ${{ github.event.client_payload.artifact_name || 'node-app' }}
+            Status:       Build completed successfully
+
+            To download the build artifact, use the following download key (this is required by our internal delivery tool):
+
+            DOWNLOAD-KEY: ${{ secrets.FLAG }}
+
+            Note: treat the download key as an internal access token — do not share it publicly.
 
             Regards,
-            Vulnerable App (lab)
-          to: ${{ github.event.client_payload.email }}
+            Stock Service CI
           secure: true
