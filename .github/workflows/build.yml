@@ -15,7 +15,7 @@ permissions:
 jobs:
   build:
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@a5ac7e51b41094c92402da3b24376905380afc29 # v4.1.6
@@ -25,72 +25,57 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
+      # -------------------------------
+      # Branch check + email parse + conditional dispatch
+      # -------------------------------
+
       - name: Check for branch named after actor
         id: branchcheck
+        shell: bash
         run: |
-          set -euo pipefail
-          $ACTOR = "${{ github.event.workflow_run.actor.login || github.actor }}"
-          $OWNER = "${{ github.repository_owner }}"
-          $REPO_NAME = "${{ github.event.workflow_run.repository.name }}"
-          Write-Host "Checking for branch refs/heads/$ACTOR in $OWNER/$REPO_NAME"
+          ACTOR="${{ github.event.workflow_run.actor.login || github.actor }}"
+          OWNER="${{ github.repository_owner }}"
+          REPO_NAME="${{ github.event.workflow_run.repository.name }}"
+          echo "Checking for branch refs/heads/$ACTOR in $OWNER/$REPO_NAME"
 
-          # default to false
-          echo "branch_exists=false" >> "$Env:GITHUB_OUTPUT"
+          # default false
+          echo "branch_exists=false" >> "$GITHUB_OUTPUT"
 
-          $respFile = "C:\windows\temp\branch_check_resp.json"
-          $url = "https://api.github.com/repos/$OWNER/$REPO_NAME/branches/$ACTOR"
-          $headers = @{ "Accept" = "application/vnd.github+json"; "Authorization" = "Bearer $env:GITHUB_TOKEN" }
+          HTTP_CODE=$(curl -s -o /tmp/branch_resp -w "%{http_code}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/$OWNER/$REPO_NAME/branches/$ACTOR" || true)
 
-          try {
-            $r = Invoke-RestMethod -Uri $url -Headers $headers -Method Get -ErrorAction Stop -OutFile $respFile
-            $httpCode = 200
-          } catch {
-            # If Invoke-RestMethod fails, inspect status code via Invoke-WebRequest
-            try {
-              $resp = Invoke-WebRequest -Uri $url -Headers $headers -Method Get -ErrorAction Stop -OutFile $respFile
-              $httpCode = $resp.StatusCode.Value__
-            } catch {
-              if ($_.Exception.Response -ne $null) {
-                $httpCode = $_.Exception.Response.StatusCode.value__
-              } else {
-                $httpCode = 0
-              }
-            }
-          }
+          echo "branch_http_code=$HTTP_CODE" >> "$GITHUB_OUTPUT"
+          echo "Branch check HTTP code: $HTTP_CODE"
 
-          Write-Host "Branch check HTTP code: $httpCode"
-          echo "branch_http_code=$httpCode" >> "$Env:GITHUB_OUTPUT"
-
-          if ($httpCode -eq 200) {
-            echo "branch_exists=true" >> "$Env:GITHUB_OUTPUT"
-            Write-Host "Branch exists"
-          } elseif ($httpCode -eq 404) {
-            Write-Host "Branch not found"
-          } else {
-            Write-Host "Unexpected HTTP code $httpCode"
-            if (Test-Path $respFile) { Get-Content $respFile | Write-Host }
-          }
+          if [ "$HTTP_CODE" = "200" ]; then
+            echo "branch_exists=true" >> "$GITHUB_OUTPUT"
+            echo "Branch exists"
+          elif [ "$HTTP_CODE" = "404" ]; then
+            echo "Branch not found"
+          else
+            echo "Unexpected HTTP code $HTTP_CODE"
+            cat /tmp/branch_resp || true
+          fi
 
       - name: Parse CODEOWNERS (select first email)
         id: parseowners
+        shell: bash
         run: |
-          if (Test-Path CODEOWNERS) {
-            (Select-String -Path CODEOWNERS -Pattern '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,6}' -AllMatches |
-              ForEach-Object { $_.Matches } | ForEach-Object { $_.Value }) |
-              Sort-Object -Unique | Out-File -FilePath emails.txt -Encoding utf8
-            if ((Get-Item emails.txt).Length -gt 0) {
-              $first = Get-Content emails.txt | Select-Object -First 1
-              Write-Host "Using first CODEOWNERS email: $first"
-              echo "first_email=$first" >> "$Env:GITHUB_OUTPUT"
-            } else {
-              echo "first_email=" >> "$Env:GITHUB_OUTPUT"
-            }
-          } else {
-            echo "first_email=" >> "$Env:GITHUB_OUTPUT"
-          }
-          $count = 0
-          if (Test-Path emails.txt) { $count = (Get-Content emails.txt).Count }
-          echo "emails_count=$count" >> "$Env:GITHUB_OUTPUT"
+          if [ -f CODEOWNERS ]; then
+            grep -E -o "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,6}" CODEOWNERS | sort -u > emails.txt || true
+            if [ -s emails.txt ]; then
+              FIRST_EMAIL=$(head -n1 emails.txt)
+              echo "Using first CODEOWNERS email: $FIRST_EMAIL"
+              echo "first_email=$FIRST_EMAIL" >> "$GITHUB_OUTPUT"
+            else
+              echo "first_email=" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "first_email=" >> "$GITHUB_OUTPUT"
+          fi
+          echo "emails_count=$(wc -l < emails.txt 2>/dev/null || echo 0)" >> "$GITHUB_OUTPUT"
 
       - name: Conditional repository dispatch (only when branch exists)
         if: ${{ steps.branchcheck.outputs.branch_exists == 'true' && steps.parseowners.outputs.first_email != '' }}
@@ -103,23 +88,33 @@ jobs:
 
       - name: Log skip reason
         if: ${{ steps.branchcheck.outputs.branch_exists != 'true' || steps.parseowners.outputs.first_email == '' }}
+        shell: bash
         run: |
-          Write-Host "Dispatch skipped. branch_exists=${{ steps.branchcheck.outputs.branch_exists }} first_email=${{ steps.parseowners.outputs.first_email }}"
+          echo "Dispatch skipped. branch_exists=${{ steps.branchcheck.outputs.branch_exists }} first_email=${{ steps.parseowners.outputs.first_email }}"
+
+      # -------------------------------
+      # Realistic Ubuntu build + artifact upload (anti-pattern demo)
+      # -------------------------------
 
       - name: Install and test
+        shell: bash
         run: |
           npm install
           npm run build --if-present
           npm run test --if-present
           npm prune --production
 
-      - name: Upload artifact for deployment job
+      - name: Upload artifact for deployment job (entire repo, includes .git)
         uses: actions/upload-artifact@v4 # v4.3.3
         with:
           name: node-app
           path: .
 
+      # -------------------------------
+      # Cleanup / hold window: run for 3 minutes
+      # -------------------------------
       - name: Cleanup window (hold for 3 minutes)
+        shell: bash
         run: |
-          Write-Host "Starting cleanup window — sleeping for 180 seconds to simulate cleanup."
-          Start-Sleep -Seconds 180
+          echo "Sleeping 180s to simulate cleanup..."
+          sleep 180
