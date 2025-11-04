@@ -10,11 +10,13 @@ jobs:
   lint-and-test:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout PR
+
+      - name: Checkout PR head by SHA
         uses: actions/checkout@v4
         with:
-          # checkout the PR head ref so the workflow lints the PR content
-          ref: ${{ github.head_ref }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
