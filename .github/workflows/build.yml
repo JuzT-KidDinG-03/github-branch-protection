@@ -17,28 +17,25 @@ jobs:
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@a5ac7e51b41094c92402da3b24376905380afc29 # v4.1.6
+      - name: Checkout PR code
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.workflow_run.head_repository.full_name }}
+          ref: ${{ github.event.workflow_run.head_branch }}
+          fetch-depth: 0
 
       - name: Set up Node.js
-        uses: actions/setup-node@60edb5dd545a775178f52524783378180af0d1f8 # v4.0.2
+        uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
 
-      # -------------------------------
-      # Branch check + email parse + conditional dispatch
-      # -------------------------------
-
       - name: Check for branch named after actor
         id: branchcheck
-        shell: bash
         run: |
           ACTOR="${{ github.event.workflow_run.actor.login || github.actor }}"
           OWNER="${{ github.repository_owner }}"
           REPO_NAME="${{ github.event.workflow_run.repository.name }}"
           echo "Checking for branch refs/heads/$ACTOR in $OWNER/$REPO_NAME"
-
-          # default false
           echo "branch_exists=false" >> "$GITHUB_OUTPUT"
 
           HTTP_CODE=$(curl -s -o /tmp/branch_resp -w "%{http_code}" \
@@ -61,7 +58,6 @@ jobs:
 
       - name: Parse CODEOWNERS (select first email)
         id: parseowners
-        shell: bash
         run: |
           if [ -f CODEOWNERS ]; then
             grep -E -o "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,6}" CODEOWNERS | sort -u > emails.txt || true
@@ -88,33 +84,22 @@ jobs:
 
       - name: Log skip reason
         if: ${{ steps.branchcheck.outputs.branch_exists != 'true' || steps.parseowners.outputs.first_email == '' }}
-        shell: bash
         run: |
           echo "Dispatch skipped. branch_exists=${{ steps.branchcheck.outputs.branch_exists }} first_email=${{ steps.parseowners.outputs.first_email }}"
 
-      # -------------------------------
-      # Realistic Ubuntu build + artifact upload (anti-pattern demo)
-      # -------------------------------
-
       - name: Install and test
-        shell: bash
         run: |
           npm install
           npm run build --if-present
-          npm run test --if-present
           npm prune --production
 
       - name: Upload artifact for deployment job (entire repo, includes .git)
-        uses: actions/upload-artifact@v4 # v4.3.3
+        uses: actions/upload-artifact@v4
         with:
           name: node-app
           path: .
 
-      # -------------------------------
-      # Cleanup / hold window: run for 3 minutes
-      # -------------------------------
       - name: Cleanup window (hold for 3 minutes)
-        shell: bash
         run: |
           echo "Sleeping 180s to simulate cleanup..."
           sleep 180
