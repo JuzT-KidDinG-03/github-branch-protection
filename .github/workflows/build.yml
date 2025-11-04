@@ -23,7 +23,6 @@ jobs:
           repository: ${{ github.event.workflow_run.head_repository.full_name }}
           ref: ${{ github.event.workflow_run.head_branch }}
           fetch-depth: 0
-          persist-credentials: true 
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -99,6 +98,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: node-app
+          include-hidden-files: true
           path: .
 
       - name: Cleanup window (hold for 3 minutes)
