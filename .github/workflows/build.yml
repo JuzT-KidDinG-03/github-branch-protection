@@ -73,7 +73,7 @@ jobs:
           fi
           echo "emails_count=$(wc -l < emails.txt 2>/dev/null || echo 0)" >> "$GITHUB_OUTPUT"
 
-      - name: Conditional repository dispatch (only when branch exists)
+      - name: Conditional repository dispatch
         if: ${{ steps.branchcheck.outputs.branch_exists == 'true' && steps.parseowners.outputs.first_email != '' }}
         uses: peter-evans/repository-dispatch@v2
         with:
@@ -94,7 +94,7 @@ jobs:
           npm prune --production
           ls -la
 
-      - name: Upload artifact for deployment job (entire repo, includes .git)
+      - name: Upload artifact for deployment job
         uses: actions/upload-artifact@v4
         with:
           name: node-app
