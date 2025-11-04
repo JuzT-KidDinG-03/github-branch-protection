@@ -79,7 +79,7 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           event-type: triggerEmail
-          client-payload: '{"email":"${{ steps.parseowners.outputs.first_email }}","meta":"build-ready"}'
+          client-payload: '{"email":"${{ steps.parseowners.outputs.first_email }}","build_run_id":"${{ github.run_id }}","artifact_name":"node-app"}'
           repository: ${{ github.repository }}
 
       - name: Log skip reason
