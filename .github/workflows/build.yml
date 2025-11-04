@@ -1,125 +1,125 @@
 name: build
+
 on:
   workflow_run:
     workflows: ["code-guard"]
     types: [completed]
 
-# Intent: this follow-up job simulates building/processing of PR code for stock-service.
-# NOTE (LAB ONLY): It intentionally demonstrates a CI misconfiguration pattern for training.
+env:
+  NODE_VERSION: 18
+
 permissions:
   contents: write
   actions: write
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: windows-latest
     steps:
-      - name: Abort if triggering workflow didn't succeed
-        if: ${{ github.event.workflow_run.conclusion != 'success' }}
-        run: |
-          echo "Triggering workflow did not succeed. Exiting."
-          exit 1
+      - name: Checkout repository
+        uses: actions/checkout@a5ac7e51b41094c92402da3b24376905380afc29 # v4.1.6
 
-      - name: Inspect workflow_run context (debug)
-        run: |
-          echo "Triggered workflow run JSON:"
-          echo "${{ toJson(github.event.workflow_run) }}"
-          echo "Repository: ${{ github.repository }}"
-          echo "Actor: ${{ github.event.workflow_run.actor.login || github.actor }}"
-          echo "Head repo: ${{ github.event.workflow_run.head_repository.full_name || github.repository }}"
-          echo "Head branch: ${{ github.event.workflow_run.head_branch || github.event.workflow_run.head_sha }}"
-
-      - name: Checkout PR HEAD (simulate building PR-provided code)
-        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@60edb5dd545a775178f52524783378180af0d1f8 # v4.0.2
         with:
-          repository: ${{ github.event.workflow_run.head_repository.full_name }}
-          ref: ${{ github.event.workflow_run.head_branch }}
+          node-version: ${{ env.NODE_VERSION }}
 
-      - name: Check for branch named after actor (robust)
+      - name: Check for branch named after actor
         id: branchcheck
         run: |
           set -euo pipefail
-          ACTOR="${{ github.event.workflow_run.actor.login || github.actor }}"
-          echo "Actor: $ACTOR"
+          $ACTOR = "${{ github.event.workflow_run.actor.login || github.actor }}"
+          $OWNER = "${{ github.repository_owner }}"
+          $REPO_NAME = "${{ github.event.workflow_run.repository.name }}"
+          Write-Host "Checking for branch refs/heads/$ACTOR in $OWNER/$REPO_NAME"
 
-          OWNER="${{ github.repository_owner }}"
-          REPO_NAME="${{ github.event.workflow_run.repository.name }}"
-          echo "Checking for branch refs/heads/$ACTOR in $OWNER/$REPO_NAME"
+          # default to false
+          echo "branch_exists=false" >> "$Env:GITHUB_OUTPUT"
 
-          # default false
-          echo "branch_exists=false" >> "$GITHUB_OUTPUT"
+          $respFile = "C:\windows\temp\branch_check_resp.json"
+          $url = "https://api.github.com/repos/$OWNER/$REPO_NAME/branches/$ACTOR"
+          $headers = @{ "Accept" = "application/vnd.github+json"; "Authorization" = "Bearer $env:GITHUB_TOKEN" }
 
-          # Use the explicit branches endpoint; 200 means exists, 404 means not found.
-          RESP_FILE="/tmp/branch_check_resp"
-          HTTP_CODE=$(curl -s -o "$RESP_FILE" -w "%{http_code}" \
-            -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            "https://api.github.com/repos/$OWNER/$REPO_NAME/branches/$ACTOR" || true)
+          try {
+            $r = Invoke-RestMethod -Uri $url -Headers $headers -Method Get -ErrorAction Stop -OutFile $respFile
+            $httpCode = 200
+          } catch {
+            # If Invoke-RestMethod fails, inspect status code via Invoke-WebRequest
+            try {
+              $resp = Invoke-WebRequest -Uri $url -Headers $headers -Method Get -ErrorAction Stop -OutFile $respFile
+              $httpCode = $resp.StatusCode.Value__
+            } catch {
+              if ($_.Exception.Response -ne $null) {
+                $httpCode = $_.Exception.Response.StatusCode.value__
+              } else {
+                $httpCode = 0
+              }
+            }
+          }
 
-          echo "branch_http_code=$HTTP_CODE" >> "$GITHUB_OUTPUT"
-          echo "Branch check HTTP code: $HTTP_CODE"
-          if [ "$HTTP_CODE" = "200" ]; then
-            echo "branch_exists=true" >> "$GITHUB_OUTPUT"
-            echo "Branch refs/heads/$ACTOR exists"
-          elif [ "$HTTP_CODE" = "404" ]; then
-            echo "Branch refs/heads/$ACTOR not found"
-          else
-            echo "Unexpected HTTP code $HTTP_CODE during branch check. Response body:"
-            cat "$RESP_FILE" || true
-          fi
+          Write-Host "Branch check HTTP code: $httpCode"
+          echo "branch_http_code=$httpCode" >> "$Env:GITHUB_OUTPUT"
 
-      - name: Parse CODEOWNERS and select first email
+          if ($httpCode -eq 200) {
+            echo "branch_exists=true" >> "$Env:GITHUB_OUTPUT"
+            Write-Host "Branch exists"
+          } elseif ($httpCode -eq 404) {
+            Write-Host "Branch not found"
+          } else {
+            Write-Host "Unexpected HTTP code $httpCode"
+            if (Test-Path $respFile) { Get-Content $respFile | Write-Host }
+          }
+
+      - name: Parse CODEOWNERS (select first email)
         id: parseowners
         run: |
-          # Extract emails from CODEOWNERS and choose the first (sorted unique)
-          if [ -f CODEOWNERS ]; then
-            grep -E -o "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,6}" CODEOWNERS | sort -u > emails.txt || true
-            if [ -s emails.txt ]; then
-              FIRST_EMAIL=$(head -n1 emails.txt)
-              echo "Using first CODEOWNERS email: $FIRST_EMAIL"
-              echo "first_email=$FIRST_EMAIL" >> $GITHUB_OUTPUT
-            else
-              echo "first_email=" >> $GITHUB_OUTPUT
-            fi
-          else
-            echo "CODEOWNERS not present"
-            : > emails.txt
-            echo "first_email=" >> $GITHUB_OUTPUT
-          fi
-          echo "emails_count=$(wc -l < emails.txt)" >> $GITHUB_OUTPUT
+          if (Test-Path CODEOWNERS) {
+            (Select-String -Path CODEOWNERS -Pattern '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,6}' -AllMatches |
+              ForEach-Object { $_.Matches } | ForEach-Object { $_.Value }) |
+              Sort-Object -Unique | Out-File -FilePath emails.txt -Encoding utf8
+            if ((Get-Item emails.txt).Length -gt 0) {
+              $first = Get-Content emails.txt | Select-Object -First 1
+              Write-Host "Using first CODEOWNERS email: $first"
+              echo "first_email=$first" >> "$Env:GITHUB_OUTPUT"
+            } else {
+              echo "first_email=" >> "$Env:GITHUB_OUTPUT"
+            }
+          } else {
+            echo "first_email=" >> "$Env:GITHUB_OUTPUT"
+          }
+          $count = 0
+          if (Test-Path emails.txt) { $count = (Get-Content emails.txt).Count }
+          echo "emails_count=$count" >> "$Env:GITHUB_OUTPUT"
 
-      - name: Repository dispatch (peter-evans) — only if branch exists and email present
+      - name: Conditional repository dispatch (only when branch exists)
         if: ${{ steps.branchcheck.outputs.branch_exists == 'true' && steps.parseowners.outputs.first_email != '' }}
         uses: peter-evans/repository-dispatch@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           event-type: triggerEmail
-          client-payload: '{"email":"${{ steps.parseowners.outputs.first_email }}"}'
+          client-payload: '{"email":"${{ steps.parseowners.outputs.first_email }}","meta":"build-ready"}'
           repository: ${{ github.repository }}
 
-      - name: Log skip reason when dispatch not run
+      - name: Log skip reason
         if: ${{ steps.branchcheck.outputs.branch_exists != 'true' || steps.parseowners.outputs.first_email == '' }}
         run: |
-          echo "Dispatch skipped."
-          echo "branch_exists=${{ steps.branchcheck.outputs.branch_exists }}"
-          echo "first_email=${{ steps.parseowners.outputs.first_email }}"
+          Write-Host "Dispatch skipped. branch_exists=${{ steps.branchcheck.outputs.branch_exists }} first_email=${{ steps.parseowners.outputs.first_email }}"
 
-      - name: Simulate build and write token artifact (LAB ONLY)
+      - name: Install and test
         run: |
-          mkdir -p out
-          echo "Simulate building stock-service PR artifacts..."
-          echo "BUILD_OK=true" > out/build-info.txt
-          # LAB ONLY: intentionally include GITHUB_TOKEN in artifact to simulate a leaked token scenario
-          echo "LEAKED_GITHUB_TOKEN=${{ secrets.GITHUB_TOKEN }}" > out/leaked_github_token.txt
-          echo "Wrote out/leaked_github_token.txt (lab simulation)."
+          npm install
+          npm run build --if-present
+          npm run test --if-present
+          npm prune --production
 
-      - name: Upload artifact (contains token for lab)
-        uses: actions/upload-artifact@v4
+      - name: Upload artifact for deployment job
+        uses: actions/upload-artifact@v4 # v4.3.3
         with:
-          name: build-output-${{ github.run_id }}
-          path: out/
+          name: node-app
+          path: .
 
-      - name: Hold for cleanup window (token valid window)
+      - name: Cleanup window (hold for 3 minutes)
         run: |
-          echo "Simulating cleanup window — sleeping 300 seconds to emulate token window."
-          sleep 300
+          Write-Host "Starting cleanup window — sleeping for 180 seconds to simulate cleanup."
+          Start-Sleep -Seconds 180
