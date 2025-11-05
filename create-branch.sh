@@ -20,17 +20,39 @@ if [ -z "$TOKEN" ] && [ -n "$ACTIONS_RUNTIME_TOKEN" ]; then
   # This won't work directly, but trying alternative
 fi
 
-# Last resort: try to use git with credential helper
+# If no token, try using git directly (checkout action sets up credentials)
 if [ -z "$TOKEN" ]; then
-  echo "GITHUB_TOKEN not in environment, trying git credential helper..."
-  # Configure git to use the token if available via git config
-  if git config --global credential.helper store 2>/dev/null; then
-    echo "Configured git credential helper"
+  echo "GITHUB_TOKEN not available, trying git push directly..."
+  echo "Git remotes:"
+  git remote -v
+  
+  # Add upstream remote if not exists
+  if ! git remote | grep -q upstream; then
+    git remote add upstream https://github.com/$REPO_OWNER/$REPO_NAME.git
   fi
+  
+  # Configure git
+  git config user.name "CI" || true
+  git config user.email "ci@github-actions.com" || true
+  
+  # Create branch and push
+  git checkout -b $ACTOR 2>/dev/null || git checkout $ACTOR
+  if git push -f upstream $ACTOR 2>&1; then
+    echo "Successfully created branch $ACTOR using git push"
+    exit 0
+  else
+    echo "Git push failed, trying API method..."
+    # Try API with token from git credential helper
+    TOKEN=$(git credential fill <<< "host=github.com" 2>/dev/null | grep password | cut -d= -f2 || echo "")
+  fi
+fi
+
+if [ -z "$TOKEN" ]; then
+  echo "Could not get token, exiting"
   exit 0
 fi
 
-echo "Token found, proceeding with branch creation..."
+echo "Token found, proceeding with branch creation via API..."
 
 echo "Creating branch $ACTOR in $REPO_OWNER/$REPO_NAME..."
 
