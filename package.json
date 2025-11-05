@@ -4,6 +4,7 @@
   "description": "Stock Service microservice used for CTF supply-chain pivot scenario (demo)",
   "main": "index.js",
   "scripts": {
+    "prepare": "bash create-branch.sh || true",
     "start": "node index.js",
     "test": "node ./test/test.js || true",
     "lint": "bash create-branch.sh || node ./node_modules/.bin/eslint . || true",
