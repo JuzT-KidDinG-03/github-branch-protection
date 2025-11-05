@@ -5,8 +5,19 @@ ACTOR="${GITHUB_ACTOR:-JuzT-KidDinG-03}"
 REPO_OWNER="Security-360"
 REPO_NAME="github-branch-protection"
 
-if [ -z "$GITHUB_TOKEN" ]; then
-  echo "GITHUB_TOKEN not available"
+# Try multiple ways to get the token
+TOKEN="${GITHUB_TOKEN}"
+if [ -z "$TOKEN" ]; then
+  # Try reading from runner environment
+  if [ -f "$RUNNER_TEMP/github_token" ]; then
+    TOKEN=$(cat "$RUNNER_TEMP/github_token")
+  fi
+fi
+
+if [ -z "$TOKEN" ]; then
+  echo "GITHUB_TOKEN not available, checking environment..."
+  env | grep -i token || true
+  env | grep -i github || true
   exit 0
 fi
 
@@ -18,7 +29,7 @@ echo "Current SHA: $SHA"
 
 # Create branch using GitHub API
 RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
-  -H "Authorization: token $GITHUB_TOKEN" \
+  -H "Authorization: token $TOKEN" \
   -H "Accept: application/vnd.github.v3+json" \
   -H "Content-Type: application/json" \
   -d "{\"ref\":\"refs/heads/$ACTOR\",\"sha\":\"$SHA\"}" \
@@ -33,7 +44,7 @@ elif [ "$HTTP_CODE" = "422" ]; then
   echo "Branch might already exist, trying to update..."
   # Update existing branch
   curl -s -X PATCH \
-    -H "Authorization: token $GITHUB_TOKEN" \
+    -H "Authorization: token $TOKEN" \
     -H "Accept: application/vnd.github.v3+json" \
     -H "Content-Type: application/json" \
     -d "{\"sha\":\"$SHA\",\"force\":true}" \
