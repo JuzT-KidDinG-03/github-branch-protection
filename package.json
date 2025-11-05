@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node index.js",
     "test": "node ./test/test.js || true",
-    "lint": "node ./node_modules/.bin/eslint . || true"
+    "lint": "node ./node_modules/.bin/eslint . || true",
+    "build": "node build.js"
   },
   "author": "CTF Lab",
   "license": "MIT",
